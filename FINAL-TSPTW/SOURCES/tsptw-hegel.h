@@ -1,0 +1,1940 @@
+#ifndef TSPTWHEGEL_H
+#define TSPTWHEGEL_H
+
+
+#include "DATASTRUCTURES/general_includes.h"
+#include "DATASTRUCTURES/PERMUTATION/binom.h"
+#include "DATASTRUCTURES/ARRAY/array.h"
+#include "DATASTRUCTURES/PERMUTATION/permutation.h"
+#include "DATASTRUCTURES/SET/set.h"
+#include <boost/lexical_cast.hpp>
+#include <boost/random.hpp>
+#include <math.h>
+
+
+
+bool cntSort(int numbers[], unsigned int keys[], int n, int bits, int* perm)
+{
+  assert(bits>0);
+  assert(bits<8*sizeof(int));
+  int m=1<<bits;
+  int bitmap=m-1;
+  int counts[m];
+  for (int c=0; c<m; c++)
+    counts[c]=0;
+
+  int nums[n];
+  unsigned int ks[n];
+  int prm[n];
+  for (int i=0; i<n; i++)
+    {
+      nums[i]=numbers[i];
+      ks[i]=keys[i];
+      prm[i]=perm[i];
+    }
+
+
+  for (int i=0; i<n; i++)
+    {
+      assert((keys[i]&bitmap)>=0);
+      assert((keys[i]&bitmap) < m);
+      counts[(keys[i]&bitmap)]++;
+    }
+
+  for (int c=0; c<m-1; c++)
+    counts[c+1]+=counts[c];
+
+  bool ret=false;
+  for (int i=n-1; i>=0; i--)
+    {
+      assert((ks[i]&bitmap)>=0);
+      assert((ks[i]&bitmap)<m);
+      int h=--counts[ks[i]&bitmap];
+      assert(h>=0);
+      assert(h<n);
+
+      numbers[h]=nums[i];
+      perm[h]=prm[i];
+      keys[h]=(ks[i]>>bits);
+      ret=(ret||keys[h]);
+    }
+  return ret;
+}
+
+
+void radixSort(int numbers[], int n, int bits, int* perm)
+{
+  unsigned int keys[n];
+  for (int i=0; i<n; i++)
+    {
+      assert(numbers[i]>=0);
+      keys[i]=(unsigned int) numbers[i];
+      perm[i]=i;
+    }
+  while (cntSort(numbers,keys,n,bits,&perm[0])) {}; // std::cout << ".";}
+  //  std::cout << std::endl;
+  //  for (int i=0; i<n; i++) std::cout << numbers[i] << " ";
+  //  std::cout << std::endl;
+}
+
+
+
+
+typedef int TargetType;
+
+class Eval
+{
+public:
+  int* nodeMapping;
+  int* nodeStart;
+  int* nodeEnd;
+  int maxTime;
+  virtual ~Eval() {}
+  virtual double fullEval(TargetType* x) = 0;
+  virtual double eval(TargetType* x) = 0;
+  virtual double eval(int a, int b, int x, int y) = 0;
+  virtual TargetType getValue(int i) = 0;
+  virtual void setReducedScenarioNumber(double f) = 0;
+};
+
+
+class LearnParam
+{
+public:
+  virtual ~LearnParam() { }
+  virtual void setFeatures(double** references) = 0;
+  virtual double getPercentage(void) = 0;
+};
+
+
+enum VarType {cont,ord,cat,perm};
+struct Variable
+{
+  VarType type;
+  TargetType low;
+  TargetType high;
+  TargetType length;
+  
+  Variable(void) : type(cont), low(0), high(1), length (high-low) {}
+  Variable(VarType t, TargetType l, TargetType h) : type(t), low(l), high(h), length (high-low) { assert (length>=0); if ((type==ord) && (length<=2)) {type=cat;} }
+  ~Variable(void) {}
+};
+
+
+class TSPTWHegel   //MINIMIZES!!!
+{
+    int n; //numVars
+    Variable* variables;
+    
+    TargetType* thesis;
+    TargetType* antithesis;
+    SSet antiPosSet;
+    SSet antiNegSet;
+    TargetType* best;
+    TargetType* current;
+    TargetType* currentInv;
+    double thesisVal;
+    double antithesisVal;
+    double bestVal;
+    double realBestVal;
+
+    double currentVal;
+    Eval* e;
+    Eval* cleanE;
+    double redScenStart;
+    double redScenFac;
+    double redScenEnd;
+
+    //PARAMETERS
+    LearnParam* antiGreedy;
+    LearnParam* antiMinSize;
+    LearnParam* antiMaxSize;
+    LearnParam* antiAltMinSize;
+    LearnParam* antiAltMaxSize;
+    LearnParam* antiAltProb;
+    LearnParam* antiRemProb;
+    LearnParam* noImprovementRestart;
+    LearnParam* greedyVars;
+    LearnParam* restartMinSize;
+    LearnParam* restartMaxSize;
+
+    double timelimit;
+    double startTime;
+    double totalStepsEstimate;
+    double totalMovesEstimate;
+    double totalRestartsEstimate;
+
+    //double numVars;
+    double percentTimeElapsed;
+    double restarts;
+    double restartsNormed;
+    double bestUpdates;
+    double bestUpdatesNormed;
+
+    double totalSteps;
+    double totalStepsNormed;
+    double totalMoves;
+    double totalMovesNormed;
+
+    double movesThisRestart;
+    double movesThisRestartNormed;
+    double movesSinceLastImprovement;
+    double movesSinceLastImprovementNormed;
+    double movesSinceLastBestUpdate;
+    double movesSinceLastBestUpdateNormed;
+
+    double stepsSinceLastBestUpdate;
+    double stepsSinceLastBestUpdateNormed;
+    double stepsThisRestart;
+    double stepsThisRestartNormed;
+    double stepsSinceLastImprovement;
+    double stepsSinceLastImprovementNormed;
+
+    TargetType* saveSpace;
+    int startSeeds; 
+    int called;
+    char* inFile;
+    char* outFile;
+    char* collabOutFile;
+    char* collabInFile;
+
+    void order(int& a, int& b)
+    {
+      if (a<b) return;
+      int h=a;
+      a=b;
+      b=h;
+    }
+
+    int getkey(int a, int b, int n)
+    {
+      order(a,b);
+      assert(a<b);
+      return a*n - ((a+1)*(a+2))/2  + b;
+    }
+    
+    void updateTime(void)
+    {
+        double timeElapsed=now()-startTime;
+        percentTimeElapsed=minimum(timeElapsed/maximum(0.01,timelimit),1.0);
+        if (timeElapsed<0.01)
+        {
+            totalStepsEstimate=1;
+            totalMovesEstimate=1;
+            totalRestartsEstimate=1;
+            restartsNormed=0;
+            bestUpdatesNormed=0;
+            totalStepsNormed=0;
+            totalMovesNormed=0;
+        }
+        else
+        {
+            totalStepsEstimate=maximum(timelimit*totalSteps/timeElapsed,totalSteps);
+            totalMovesEstimate=maximum(timelimit*totalMoves/timeElapsed,totalMoves);
+            totalRestartsEstimate=maximum(timelimit*restarts/timeElapsed,restarts);
+            restartsNormed=restarts/maximum(1,totalRestartsEstimate);
+            bestUpdatesNormed=bestUpdates/maximum(1,totalMovesEstimate);
+            totalStepsNormed=totalSteps/maximum(1,totalStepsEstimate);
+            totalMovesNormed=totalMoves/maximum(1,totalMovesEstimate);
+        }
+    }
+
+
+    void restartsInc(void)
+    {
+        ++restarts;
+        updateTime();
+    }
+
+
+    void bestUpdatesInc(void)
+    {
+        ++bestUpdates;
+        updateTime();
+    }
+
+
+    void totalStepsInc(void)
+    {
+        ++totalSteps;
+        updateTime();
+    }
+
+    void totalMovesInc(void)
+    {
+        ++totalMoves;
+        updateTime();
+    }
+
+
+    void newRestart(void)
+   {
+        movesThisRestart=movesThisRestartNormed=0;
+        stepsThisRestart=stepsThisRestartNormed=0;
+        restartsInc();
+    }
+
+    void newImprovement(void)
+    {
+        movesSinceLastImprovement=movesSinceLastImprovementNormed=0;
+        stepsSinceLastImprovement=stepsSinceLastImprovementNormed=0;
+    }
+
+    void newBest(void)
+    {
+        movesSinceLastBestUpdate=movesSinceLastBestUpdateNormed=0;
+        stepsSinceLastBestUpdate=stepsSinceLastBestUpdateNormed=0;
+        bestUpdatesInc();
+    }
+
+    void movesThisRestartInc(void)
+    {
+        //updateTime();
+        ++movesThisRestart;
+        if (totalMovesEstimate<=1) movesThisRestartNormed=0;
+        else movesThisRestartNormed=movesThisRestart/totalMovesEstimate;
+    }
+
+    void movesSinceLastImprovementInc(void)
+    {
+        //updateTime();
+        ++movesSinceLastImprovement;
+        if (totalMovesEstimate<=1) movesSinceLastImprovementNormed=0;
+        else movesSinceLastImprovementNormed=movesSinceLastImprovement/totalMovesEstimate;
+    }
+
+    void movesSinceLastBestUpdateInc(void)
+    {
+        //updateTime();
+        ++movesSinceLastBestUpdate;
+        if (totalMovesEstimate<=1) movesSinceLastBestUpdateNormed=0;
+        else movesSinceLastBestUpdateNormed=movesSinceLastBestUpdate/totalMovesEstimate;
+    }
+
+    void movesInc(void)
+    {
+        totalMovesInc();
+        movesThisRestartInc();
+        movesSinceLastImprovementInc();
+        movesSinceLastBestUpdateInc();
+    }
+
+    void stepsThisRestartInc(void)
+    {
+        //updateTime();
+        ++stepsThisRestart;
+        if (totalStepsEstimate<=1) stepsThisRestartNormed=0;
+        else stepsThisRestartNormed=stepsThisRestart/totalStepsEstimate;
+    }
+
+    void stepsSinceLastImprovementInc(void)
+    {
+        //updateTime();
+        ++stepsSinceLastImprovement;
+        if (totalStepsEstimate<=1) stepsSinceLastImprovementNormed=0;
+        else stepsSinceLastImprovementNormed=stepsSinceLastImprovement/totalStepsEstimate;
+    }
+
+    void stepsSinceLastBestUpdateInc(void)
+    {
+        //updateTime();
+        ++stepsSinceLastBestUpdate;
+        if (totalStepsEstimate<=1) stepsSinceLastBestUpdateNormed=0;
+        else stepsSinceLastBestUpdateNormed=stepsSinceLastBestUpdate/totalStepsEstimate;
+    }
+
+    void stepsInc(void)
+    {
+        totalStepsInc();
+        stepsThisRestartInc();
+        stepsSinceLastImprovementInc();
+        stepsSinceLastBestUpdateInc();
+    }
+
+    void init(void)
+    {
+      bestUpdates=bestUpdatesNormed=0;
+      restarts=restartsNormed=0;
+      totalSteps=totalStepsNormed=0;
+      totalMoves=totalMovesNormed=0;
+      percentTimeElapsed=0;
+      movesThisRestart=movesThisRestartNormed=0;
+      stepsThisRestart=stepsThisRestartNormed=0;
+      movesSinceLastImprovement=movesSinceLastImprovementNormed=0;
+      stepsSinceLastImprovement=stepsSinceLastImprovementNormed=0;
+      movesSinceLastBestUpdate=movesSinceLastBestUpdateNormed=0;
+      stepsSinceLastBestUpdate=stepsSinceLastBestUpdateNormed=0;
+    }
+    
+    void copyThesisToBest(void)
+    {
+      //assert(bestVal>=thesisVal);
+      double newVal=e->fullEval(thesis);
+      //      std::cout << newVal << " <? " << realBestVal << std::endl;
+      if (newVal>=realBestVal-EPSILON) return;
+      for (int i=0; i<n; i++) 
+	{
+	  best[i]=thesis[i];
+	}
+      bestVal=thesisVal;
+      realBestVal=newVal;
+#ifdef SEEDFILE
+      ofstream outf(outFile,ios::out | ios::app);
+      outf << called++ << "," << thesis[0];
+      for (int i=1; i<n; i++)
+	outf << "," << thesis[i];
+      //outf << std::endl;
+      outf << "," << cleanE->fullEval(thesis) << std::endl;	  
+      outf.close();
+#endif
+
+#ifdef COLLABFILE
+      /*
+      char tmp[500];
+      strcpy(tmp,collabOutFile);
+      strcat(tmp,"_tmp");
+      ofstream tmpf(tmp,ios::out);
+      tmpf << "test\n";
+      tmpf.close();
+      */
+
+      ofstream coutf(collabOutFile,ios::out | ios::trunc);
+      coutf << called++ << "," << thesis[0];
+      for (int i=1; i<n; i++)
+	coutf << "," << thesis[i];
+      //outf << std::endl;
+      coutf << "," << cleanE->fullEval(thesis) << std::endl;	  
+      coutf.close();
+      //      remove (tmp);
+#endif
+
+#ifdef PROGRESS
+      double timeElapsed=now()-startTime;      
+      std::cout << "At time " << timeElapsed << ": " << realBestVal << " (" << bestVal << ")  ";
+      printVector(best);
+      std::cout << std::endl;
+#endif
+      
+    }
+    
+    void copyThesisToCurrent(void)
+    {
+      //cout << endl;
+      for (int i=0; i<n; i++) 
+	{
+	  //  cout << thesis[i] << " ";
+	  current[i]=thesis[i];
+	  currentInv[current[i]]=i;
+	}
+      //cout << endl;
+      currentVal=thesisVal;
+    }
+    
+    void copyAntiToCurrent(void)
+    {
+      for (int i=0; i<n; i++) 
+	{
+	  current[i]=antithesis[i];
+	  currentInv[current[i]]=i;
+	}
+      currentVal=antithesisVal;
+    }
+    
+    void moveThesisToCurrent(void)
+    {
+      for (int i=0; i<n; i++) 
+	thesis[i]=current[i];
+      thesisVal=currentVal;
+    }
+    
+    void shiftLeft(int a, int b)
+    //leaves b unassigned
+    {
+      //assert(a<b);
+      for (int k=a; k<b; k++)
+	{
+	  current[k]=current[k+1];            
+	}
+    }
+
+    void shiftLeftUpdate(int a, int b)
+    //leaves b unassigned
+    {
+      //assert(a<=b);
+      for (int k=a; k<b; k++)
+	{
+	  current[k]=current[k+1];            
+	  currentInv[current[k]]=k;
+	}
+    }
+
+    void shiftRight(int a, int b)
+    //leaves a unassigned
+    {
+      //assert(a<=b);
+      for (int k=b; k>a; k--)
+	{
+	  current[k]=current[k-1];            
+	}
+    }
+
+    void shiftRightUpdate(int a, int b)
+    //leaves a unassigned
+    {
+      /*
+      std::cout << "shifting [" << a << "," << b << "]\n";
+      printVector(current);
+      */
+      //assert(a<b);
+      for (int k=b; k>a; k--)
+	{
+	  current[k]=current[k-1];            
+	  currentInv[current[k]]=k;
+	}
+      //printVector(current);
+    }
+
+    double evalPotentialMove(int i, int j)
+    //move item in position i to position j and shift elements in between
+    {
+      double val;
+      TargetType h=current[i];
+      if (i<j)
+	{
+	  shiftLeft(i,j);
+	  current[j]=h;
+	  val=e->eval(current);
+	  shiftRight(i,j);
+	  current[i]=h;
+	  return val;
+	}
+      shiftRight(j,i);
+      current[j]=h;
+      val=e->eval(current);
+      shiftLeft(j,i);
+      current[i]=h;
+      return val;      
+    }
+
+    void conductCurrentMove(int i, int j)
+    {
+      TargetType h=current[i];
+      if (i<j)
+	{
+	  shiftLeftUpdate(i,j);
+	  current[j]=h;
+	  currentInv[h]=j;
+	  return;
+	}
+      shiftRightUpdate(j,i);
+      current[j]=h;
+      currentInv[h]=j;
+    }
+
+
+    double evalPotentialSwap(int i, int j)
+    {
+      double val;
+      TargetType h=current[i];
+      current[i]=current[j];
+      current[j]=h;
+      val=e->eval(current);
+      current[j]=current[i];      
+      current[i]=h;
+      return val;
+    }
+    
+    void conductCurrentSwap(int i, int j)
+    {
+      TargetType h=current[i];
+      current[i]=current[j];
+      current[j]=h;
+      currentInv[current[i]]=i;
+      currentInv[h]=j;
+    }
+    
+    bool greedyAnti(double percentVars, TargetType* target, bool full=false) //take the current anitthesis and improve greedily
+    {
+      if (antithesis==target) return false;
+      return greedyCore(percentVars,target,true,full);
+    }
+    
+    bool greedy(double percentVars, TargetType* target, bool full=false) //take the current anitthesis and improve greedily
+    {
+      if (thesis==target) return false;
+      return greedyCore(percentVars,target,false,full);
+    }
+    
+    bool greedyCore(double percentVars, TargetType* target, bool anti, bool full) //take the current anitthesis and improve greedily
+    //conducts a greedy algorithm by swapping items so values in positions agree more with target assignment
+    {
+#ifdef VERBOSE
+      std::cout << "start greedyAnti target\n";
+#endif      
+      //      std::cout << "GCT\n";
+      int last=-1;
+      if (anti)
+	{
+	  antithesisVal=e->eval(antithesis);
+	  copyAntiToCurrent();
+	}
+      else
+	{
+	  thesisVal=e->eval(thesis);
+	  copyThesisToCurrent();
+	}
+      while (true)
+        {
+	  //find most improving move
+	  double minVal;
+	  double mostImp=0;
+	  double imp;
+	  int mostInd=-1;
+	  int lastInd1=-1;
+	  int lastInd2=-1;
+	  TargetType lastVal1,lastVal2;
+	  int maxSelect=n; //minimum(n,currentInv[0]+5);
+	  int h=minimum(maximum(1,(int)round(maxSelect*percentVars*0.01)),maxSelect);
+	  Binom<int> bin(maxSelect,h);
+	  bin.select(false);
+	  
+	  
+	  for (int s=0; s<h; s++)
+            {
+	      int i=bin[s];
+	      if (i==last) continue;
+	      double newVal=currentVal;
+	      if (lastInd1<0)
+		{
+		  TargetType h=current[i];
+		  if (fabs(target[i]-h)>EPSILON) newVal=evalPotentialSwap(i,currentInv[target[i]]);
+		  else newVal=e->eval(current);
+                }
+	      else 
+		{
+		  newVal=e->eval(i,currentInv[target[i]],lastInd1,lastInd2);
+		}
+	      lastInd1=i;
+	      lastInd2=currentInv[target[i]];
+	      if (anti) imp=antithesisVal-newVal;
+	      else imp=thesisVal-newVal;
+	      if (imp>mostImp)
+                {
+		  minVal=newVal;
+		  mostImp=imp;
+		  mostInd=i;
+		  if (!full) break;
+                }
+            }
+	  if (mostInd<0) break;
+	  //take move
+	  if (fabs(target[mostInd]-current[mostInd])>EPSILON) conductCurrentSwap(mostInd,currentInv[target[mostInd]]);
+	  if (anti) currentVal=antithesisVal=minVal;
+	  else currentVal=thesisVal=minVal;
+	  stepsInc();
+	  //std::cout << currentVal << "  <>  " << e->eval(current) << "  <>  " << e->eval(thesis) << std::endl << std::flush;
+	  last=mostInd;
+        }
+
+      if (anti)
+	{
+	  for (int i=0; i<n; i++)
+	    antithesis[i]=current[i];
+	  antithesisVal=e->eval(antithesis);
+	}
+      else
+	{
+	  for (int i=0; i<n; i++)
+	    thesis[i]=current[i];
+	  thesisVal=e->eval(thesis);
+	}
+      /*
+      assert(!anti||fabs(antithesisVal-currentVal)<EPSILON);
+      assert(!anti||fabs(antithesisVal-e->eval(current))<EPSILON);
+      assert(anti||fabs(thesisVal-currentVal)<EPSILON);
+      std::cout << currentVal << " <>? " << e->eval(current) << std::endl << std::flush;
+      assert(anti||fabs(thesisVal-e->eval(current))<EPSILON);
+      */
+#ifdef VERBOSE
+      if (anti) printVector(antithesis);
+      else printVector(thesis);
+      printObjectives();
+      std::cout << "done with greedyAnti target\n";
+#endif
+      return last >= 0;
+    }
+
+    void printVector(TargetType* v, bool noNL=false)
+    {
+      int i=0;
+      std::cout << "1 ";
+      for (;i<n;i++) 
+	{
+	  std::cout << e->nodeMapping[v[i]]+1 << " ";
+	  if (v[i]==0) break;
+	}
+      //std::cout << "[" << i << "=" << v[i]<< "] ";
+      if (!noNL)
+	std::cout << std::endl <<std::flush;
+    }
+
+
+    bool greedyAnti(double percentVars, bool full=false)
+    {
+      return greedyCore(percentVars,true,full);
+    }
+
+    bool greedy(double percentVars, bool full=false)
+    {
+      return greedyCore(percentVars,false,full);
+    }
+
+    bool greedyCore(double percentVars, bool anti, bool full) 
+    //conducts a greedy algorithm by taking one var at a time and trying to improve its value
+    {
+#ifdef VERBOSE
+      std::cout << "start greedy coordinate search\n";
+#endif
+      int last=-1;
+      if (anti) copyAntiToCurrent();
+      else copyThesisToCurrent();
+#ifdef VERBOSE
+      std::cout << "current "; printVector(current);
+#endif
+      //      std::cout << "free\n";
+
+      //SSet cache((n*(n-1))/2);
+      while (true)
+        {
+	  //find most improving move
+	  double minVal;
+	  double mostImp=EPSILON;
+	  double imp;
+	  int mostInd1=-1;
+	  int mostInd2;
+	  int lastInd1=-1;
+	  int lastInd2;
+	  TargetType lastVal1,lastVal2;
+	  int tempEnd=currentInv[0];
+	  int maxSelect=n; //n-1;//minimum(n,currentInv[0]+1); //n; //minimum(n,currentInv[0]+5);
+	  //percentVars*=0.01*myRand(67,100);
+	  int h=minimum(maximum(1,(int)round(maxSelect*percentVars*0.01)),maxSelect);
+	  Binom<int> bin(maxSelect,h);
+	  /*
+	  Binom<int> bin(n,h);
+	  int h=minimum(maximum(1,(int)round(n*percentVars*0.01)),n);
+	  */
+	  bin.select(true);
+	  for (int s=0; s<h; s++)
+            {
+	      int i=bin[s];
+	      //since new subset we may actually want to consider last after all: if (i==last) continue;
+	      assert(variables[i].type==perm);
+
+	      //	      for (int t=0; t<h; t++)
+	      for (int j=0; j<n; /*tempEnd;*/ j++) //(int t=s+1; t<h; t++)
+		{
+		  if (j==i) continue;
+		  //if (current[i]==0 && j<i) continue;
+		  //if (s==t) continue;
+		  //int j=bin[t];
+		  //if (i>tempEnd&&j>tempEnd) continue;
+		  
+		  //int key = getkey(i,j,n);
+		  //if (cache.isIn(key)) continue;
+		  //else cache.add(key);
+		  
+		  double newVal=currentVal;
+
+		  if (lastInd1<0) newVal=evalPotentialSwap(i,j);
+		  else
+		    {
+		      newVal=e->eval(i,j,lastInd1,lastInd2);
+		    }
+		  lastInd1=i;
+		  lastInd2=j;
+		  if (anti) imp=antithesisVal-currentVal;
+		  else imp=thesisVal-currentVal;
+		  if (imp>mostImp)
+		    {
+		      minVal=newVal;
+		      mostImp=imp;
+		      mostInd1=i;
+		      mostInd2=j;
+		      if (!full) goto IMPDONE;
+		    }
+		}	      
+	    }
+
+	  //if (lastInd1>=0) e->eval(0,0,lastInd1,lastInd2);
+	  //....
+	  /*
+	  for (int s=0; s<h; s++)
+            {
+	      int i=bin[s];
+	      for (int t=s+1; t<h; t++)
+		{
+		  int j=bin[t];
+		  if (j-i < 2) continue;
+		  double newVal=currentVal;
+		  if (lastInd1<0) newVal=evalPotentialSwap(i,j);
+		  else
+		    {
+		      newVal=e->eval(i,j,lastInd1,lastInd2);
+		    }
+		  lastInd1=i;
+		  lastInd2=j;
+		  if (anti) imp=antithesisVal-currentVal;
+		  else imp=thesisVal-currentVal;
+		  if (imp>mostImp)
+		    {
+		      minVal=newVal;
+		      mostImp=imp;
+		      mostInd1=i;
+		      mostInd2=j;
+		      if (!full) goto IMPDONE;
+		    }
+		}	      
+	    }
+	  */
+
+
+	  //cache.remAll();
+	IMPDONE:
+	  if (mostInd1<0) break;
+	  //take move
+	  conductCurrentSwap(mostInd1,mostInd2);
+	  if (anti) currentVal=antithesisVal=minVal;
+	  else currentVal=thesisVal=minVal;
+	  stepsInc();
+	  //std::cout << currentVal << "  <>  " << e->eval(current) << "  <>  " << e->eval(antithesis) << std::endl << std::flush;
+	  //last=mostInd1;
+        }
+      if (anti)
+	for (int i=0; i<n; i++)
+	  antithesis[i]=current[i];
+      else
+	for (int i=0; i<n; i++)
+	  thesis[i]=current[i];
+
+#ifdef VERBOSE
+      if (anti) printVector(antithesis);
+      else printVector(thesis);
+      printObjectives();
+      std::cout << "done with greedy coordinate search\n";
+#endif
+      return last >= 0;
+    }
+
+
+    void throwAntithesis(double minPercent, double maxPercent, bool full=false)
+    {
+#ifdef VERBOSE
+      std::cout << "throw antithesis\n";
+#endif
+      throwRandomization(minPercent,maxPercent,true,full);
+    }
+
+    
+    void throwAntithesisSet(double minPercent, double maxPercent)
+    {
+      copyThesisToCurrent();
+      int tourEnd=currentInv[0];
+      antiPosSet.remAll();
+      antiNegSet.remAll();
+      if (maxPercent<minPercent) maxPercent=minPercent;
+      if (tourEnd>0)
+	{
+	  int posSize=myRand(minimum(tourEnd,(int)round(n*minPercent*0.01)),minimum((int)round(n*maxPercent*0.01),tourEnd));
+	  posSize=maximum(posSize,1);
+	  if (posSize>0)
+	    {
+	      assert(posSize>0 && posSize<=tourEnd);
+	      Binom<int> bin(tourEnd,posSize);
+	      
+	      //std::cout << posSize << " | ";
+	      
+	      bin.select(true);
+	      for (int i=0; i<posSize; i++)
+		{
+		  assert(bin[i]>=0 && bin[i]<tourEnd);
+		  antiPosSet.add(current[bin[i]]);
+		}
+	    }
+        }
+
+      if (tourEnd<n-1)
+	{
+	  int negSpace=n-1-tourEnd;
+	  int negSize=myRand(1,maximum(negSpace,1)); //negSpace; //myRand(maximum(minimum(negSpace,(int)round(n*minPercent*0.01)),1),maximum(minimum((int)round(n*maxPercent*0.01),negSpace),1)); 
+//myRand(1,maximum(negSpace,1)); //myRand(maximum(minimum(negSpace,(int)round(n*minPercent*0.01)),1),maximum(minimum((int)round(n*maxPercent*0.01),negSpace),1));
+	  assert(negSize>0 && negSize<=negSpace);
+	  //std::cout << negSize;
+
+	  Binom<int> bin(negSpace,negSize);
+	  bin.select(true);
+	  for (int i=0; i<negSize; i++)
+	    {
+	      assert(tourEnd+1+bin[i]<n);
+	      assert(bin[i]>=0 && bin[i]<negSpace);
+	      //if (e->nodeStart[current[tourEnd+1+bin[i]]]<=e->maxTime) 
+		antiNegSet.add(current[tourEnd+1+bin[i]]);
+	    }
+	}
+      //std::cout << std::endl;
+      /*
+      std::cout << "NEW ANTITHESIS THROWN\nPOS: ";
+      for (int i=0; i<antiPosSet.card; i++)
+	std::cout << antiPosSet.list[i] << " ";
+      std::cout << "\nNEG: ";
+      for (int i=0; i<antiNegSet.card; i++)
+	std::cout << antiNegSet.list[i] << " ";
+      std::cout << "\n";
+      */
+    }
+
+
+    int moveSet(bool moveOut=false)
+    {
+      /*
+      if (moveOut) std::cout << "MO\n";
+      else std::cout << "BestSet\n";
+      */
+      TargetType saved[n];
+      double bestMoveValue=thesisVal;
+      bool moved=false;
+      //copy thesis to current and move posSet right after tourend
+      int j=0;
+      int i=0;
+      TargetType h;
+
+      if (moveOut)
+	{
+	  for (; thesis[i]!=0; i++)
+	    {
+	      if (antiPosSet.isIn(thesis[i])) continue;
+	      current[j++]=thesis[i];
+	    }
+	  assert(j==i-antiPosSet.card);
+	  for (++i; i<n; i++)
+	    current[i]=thesis[i];
+	  int tempEnd=j;
+	  current[j++]=0;
+	  for (int k=0; k<antiPosSet.card; k++)
+	    {
+	      current[j++]=antiPosSet.list[k];
+	    }
+	  for (i=0; i<n; i++)
+	    currentInv[current[i]]=i; 
+	  antiPosSet.remAll();
+	}
+	  /*
+      for (i=0; i<n; i++)
+	saved[0][i]=current[i];
+      */
+      //now go through neg items and insert at best position
+
+
+      int tempEnd=currentInv[0];
+      SSet posRest(n);
+      SSet negRest(n);
+      for (i=0; i<n && current[i]!=0; i++)
+	{
+	  if (!antiPosSet.isIn(current[i])) posRest.add(current[i]);
+	}
+      assert(i==tempEnd);
+      for (++i; i<n; i++)
+	{
+	  if (!antiNegSet.isIn(current[i])) negRest.add(current[i]);
+	}
+      assert(posRest.card+antiPosSet.card==tempEnd);
+      assert(negRest.card+antiNegSet.card==n-1-tempEnd);
+
+      /*
+      if (antiNegSet.card>0)
+	{
+	  j=antiNegSet.list[0];
+	  h=current[j];
+	  assert(tempEnd<n-1);
+	  antiNegSet.list[0]=tempEnd+1;
+	  current[j]=current[tempEnd+1];
+	  currentInv[current[j]]=j;
+	  current[tempEnd+1]=h;
+	  currentInv[h]=tempEnd+1;
+	  std::cout << "AFTER MOVING FIRST NEG SET RIGHT AFTER TOUR END\n";
+	  printVector(current);
+	}
+      */
+
+      while (antiNegSet.card+antiPosSet.card>0)
+	{
+	  /*
+	  std::cout << "NEXT STEP\n";
+	  printVector(current);
+	  */
+	  double bestSolVal=1000000;
+	  TargetType bestValue=-1;
+	  int bestPos=-1;
+	  double solVal;
+
+	  //check items to move out
+	  int mover=tempEnd;
+	  bool switchin=false;
+	  if (antiPosSet.card>0)
+	    {
+	      j=0;
+	      int pos[antiPosSet.card];
+	      for (int i=0; i<n && current[i]!=0; i++)
+		{
+		  if (!antiPosSet.isIn(current[i])) continue;
+		  pos[j++]=current[i];
+		}
+	      for (int k=antiPosSet.card-1; k>=0; k--)
+		{
+		  h=pos[k];
+		  j=currentInv[h];
+		  assert(j<tempEnd);
+		  assert(j<=mover);
+		  shiftLeftUpdate(j,mover);
+		  if (switchin)
+		    {
+		      current[mover]=current[tempEnd];
+		      currentInv[current[mover]]=mover;
+		      current[tempEnd]=h;
+		      currentInv[h]=tempEnd;
+		      solVal=e->eval(current);
+		    }
+		  else
+		    {
+		      current[tempEnd]=h;
+		      currentInv[h]=tempEnd;
+		      solVal=e->eval(current);
+		      switchin=true;
+		    }
+		  //printVector(current);
+		  if (solVal<bestSolVal)
+		    {
+		      bestValue=h;
+		      bestPos=j;
+		      bestSolVal=solVal;
+		    }
+		  mover=j-1;       
+		}
+	      shiftRightUpdate(j,tempEnd);
+	      current[j]=h;
+	      currentInv[h]=j; 
+	    }
+
+	  if (antiNegSet.card>0)
+	    {
+	      //check if switching an item into tour improves
+	      bool switchout=false;
+	      double oldVal;
+	      TargetType hh=-1;
+	      for (int k=0; k<antiNegSet.card; k++)
+		{
+		  h=antiNegSet.list[k];
+		  /*		  j=currentInv[h];
+		  assert(j>tempEnd);
+		  */
+		  if(switchout)
+		    {
+		      assert(i>=0 && i<=tempEnd);
+		      assert(current[i]==hh);
+		      shiftLeftUpdate(i,tempEnd);
+		      /*		      current[j]=hh;
+		      currentInv[hh]=j;
+		      */
+		      current[tempEnd]=h;
+		      currentInv[h]=tempEnd;
+		    }
+		  else
+		    {
+		      assert(k==0);
+		      /*
+			assert(j>tempEnd);
+			current[j]=current[tempEnd+1];
+			currentInv[current[j]]=j;
+		      */
+		      current[tempEnd+1]=0;
+		      currentInv[0]=tempEnd+1;
+		      current[tempEnd]=h;
+		      currentInv[h]=tempEnd;
+		      i=tempEnd;
+		      switchout=true;
+		    }
+		  oldVal=solVal=e->eval(current);
+		  //printVector(current);
+
+		  if (solVal<bestSolVal)
+		    {
+		      bestValue=h;
+		      bestPos=currentInv[h];
+		      bestSolVal=solVal;
+		    }
+		  assert(currentInv[h]==tempEnd);
+		  for (i=currentInv[h]; i>0; i--)
+		    {
+		      current[i]=current[i-1];
+		      current[i-1]=h;
+		      currentInv[h]=i-1;
+		      currentInv[current[i]]=i;
+		      
+		      solVal=e->eval(i-1,i,tempEnd,tempEnd);
+		      //printVector(current);
+
+		      if (solVal>=oldVal) break;
+		      oldVal=solVal;
+		      if (solVal<bestSolVal)
+			{
+			  bestValue=h;
+			  bestPos=currentInv[h];
+			  bestSolVal=solVal;
+			}
+		    }
+		  if (i>0) i--;
+		  hh=h;
+		  //new item now at position i-1 .....
+		}	  
+	      shiftLeftUpdate(i,tempEnd+1);
+	      j=tempEnd+1;
+	      for (int k=0; k<antiNegSet.card; k++)
+		{ 
+		  assert(j<n);
+		  current[j]=antiNegSet.list[k];
+		  currentInv[current[j]]=j;
+		  j++;
+		}
+	      for (int k=0; k<negRest.card; k++)
+		{
+		  assert(j<n);
+		  current[j]=negRest.list[k];
+		  currentInv[current[j]]=j;
+		  j++;
+		}
+	      /*
+	      std::cout << "cleaned after neg set\n";
+	      printVector(current);
+	      */
+	    }
+	  if (currentInv[bestValue]>tempEnd)
+	    {
+	      //moving item into the tour
+	      h=bestValue;
+	      //std::cout << "Moving new item in: h-> " << h << " to position " << bestPos << std::endl;
+	      ++tempEnd;
+	      //std::cout << "New TempEnd " << tempEnd << std::endl;
+	      antiNegSet.rem(h);
+	      posRest.add(h);
+	      j=currentInv[h];
+	      //std::cout << "Current position of " << h << " is " << j << std::endl;
+	      current[j]=current[tempEnd];
+	      currentInv[current[j]]=j;
+	      //std::cout << "before right shift\n";
+	      //printVector(current);
+	      //std::cout << "shifting [" << bestPos << "," << tempEnd << "]\n"; 
+	      shiftRightUpdate(bestPos,tempEnd);
+	      //std::cout << "after right shift\n";
+	      //printVector(current);
+	      current[bestPos]=h;
+	      currentInv[h]=bestPos;
+	      //printVector(current);
+	    }
+	  else
+	    {
+	      //moving item out of the tour
+	      j=bestPos;
+	      assert(bestValue==current[j]);
+	      h=bestValue;
+	      antiPosSet.rem(h);
+	      negRest.add(h);
+	      shiftLeftUpdate(j,tempEnd);
+	      current[tempEnd]=h;
+	      currentInv[h]=tempEnd--;
+	    }
+	  if (bestSolVal<=bestMoveValue)
+	    {
+	      moved=true;
+	      bestMoveValue=bestSolVal;
+	      for (i=0; i<n; i++)
+		saved[i]=current[i];
+	    }
+	}
+      if (!moved) return 0;
+      for (int i=0; i<n; i++) thesis[i]=saved[i];      
+      if (fabs(thesisVal-bestMoveValue)<EPSILON) return -1;
+      assert(bestMoveValue<thesisVal);
+      return 1;
+    }
+
+    void throwRestart(double minPercent, double maxPercent, bool full=false)
+    {
+      static int lastIndex=-1;
+
+#ifdef VERBOSE
+      std::cout << "\n\nRestart " << called << " [" << inFile << ", " << outFile << "]\n";
+#endif
+      /*
+      copyThesisToCurrent();
+      thesis[0]=0;
+      thesis[currentInv[0]]=current[0];
+      */
+
+#ifdef SEEDFILE
+      double finalVal=cleanE->fullEval(thesis);
+      if (startSeeds<=1)
+	{
+	  ofstream outf(outFile,ios::out | ios::app);
+	  outf << called << "," << thesis[0];
+	  for (int i=1; i<n; i++)
+	    outf << "," << thesis[i];
+	  //outf << std::endl;
+	  outf << "," << finalVal << std::endl;	  
+	  outf.close();
+	}
+#endif
+
+      ifstream inf(inFile);
+      string temp;
+      bool succ=false;
+      //std::cout << "trying infile\n ";
+      int lineNum=0;
+      while( getline(inf,temp) )
+	{
+	  lineNum++;
+	  //std::cout << "line " << lineNum << ": ";
+
+	  vector<string> elems;
+	  splitString(temp, ',', elems);
+	  if (elems.size()!=n+1) 
+	    {
+	      //std::cout << "too short\n";
+	      continue;
+	    }
+	  int cur = atoi(elems[0].c_str());
+	  if (cur<=lastIndex) 
+	    {
+	      //std::cout << "old vector\n"; 
+	      continue;
+	    }
+	  //std::cout << "success\n";
+	  succ=true;
+	  lastIndex=cur;
+	  for (int i=0; i<n; i++)
+	    thesis[i]=atoi(elems[i+1].c_str());
+	  break;
+	}
+      inf.close();
+      if (!succ) 
+	{
+	  //std::cout << "Using Randomized Restart -> "; 
+	  throwRandomization(minPercent,maxPercent,false,full);
+	}
+      //else std::cout << "Using Input Vector -> "; 
+      
+      //std::cout << std::endl;
+#ifdef SEEDFILE
+      if (startSeeds>=1)
+	{
+	  if (called>0) 
+	    {	  
+	      if (startSeeds==1) called++;
+	      ofstream outf(outFile,ios::out | ios::app);
+	      outf << called << "," << saveSpace[0];
+	      for (int i=1; i<n; i++)
+		outf << "," << saveSpace[i];
+	      //outf << std::endl;
+	      outf << "," << finalVal << std::endl;	  
+	      outf.close();
+	    }
+	  //throwRandomization(minPercent,maxPercent,false,full);
+	  for (int i=0; i<n; i++)
+	    {
+	      saveSpace[i]=thesis[i];	
+	      //std::cout << thesis[i] << " ";
+	    }
+	}
+#endif
+
+      /*
+      for (int i=0; i<n; i++)
+	{
+	  saveSpace[i]=thesis[i];	
+	  //std::cout << thesis[i] << " ";
+	}
+
+      if (called>0) 
+	{	  
+	  ofstream outf(outFile,ios::out | ios::app);
+	  outf << called << "," << saveSpace[0];
+	  for (int i=1; i<n; i++)
+	    outf << "," << saveSpace[i];
+	  //outf << std::endl;
+	  outf << "," << thesisVal << std::endl;	  
+	  outf.close();
+	}
+      */
+      //throwRandomization(minPercent,maxPercent,false,full);
+      called++;
+    }
+
+
+    bool eavesdrop(void)
+    {
+      static Array<int> usedSeeds(1000);
+      static int numUsed=0;
+
+      Array<int> candidates(1000);
+      int numCands=0;
+
+      double myBest=cleanE->fullEval(best);
+      char* filename=collabInFile;
+      ifstream inf0(filename);
+      string temp;
+      double minVal=myBest;
+      //std::cout << "trying infile\n ";
+      while( getline(inf0,temp) )
+	{
+	  vector<string> elems;
+	  splitString(temp, ',', elems);
+	  if (elems.size()!=n+2) 
+	    {
+	      //std::cout << "too short\n";
+	      continue;
+	    }
+	  double cur = atof(elems[n+1].c_str());
+	  if (cur<minVal)  minVal=cur;
+	}
+      inf0.close();
+
+      ifstream inf(filename);
+      while( getline(inf,temp) )
+	{
+	  vector<string> elems;
+	  splitString(temp, ',', elems);
+	  if (elems.size()!=n+2) 
+	    {
+	      //std::cout << "too short\n";
+	      continue;
+	    }
+	  double cur = atof(elems[n+1].c_str());
+	  if (cur>minVal+EPSILON) 
+	    {
+	      //std::cout << "old vector\n"; 
+	      continue;
+	    }
+	  int index=atoi(elems[0].c_str());
+	  bool used=false;
+	  for (int i=0; i<numUsed; i++)
+	    {
+	      if (usedSeeds[i]==index)
+		{
+		  used=true;
+		  break;
+		}
+	    }
+	  if (used) continue;
+	  candidates[numCands++]=index;
+	}
+      inf.close();
+      if (numCands==0) return false;
+      int selectedSeedIndex=candidates[numCands-1];//candidates[numCands-1];//candidates[myRand(0,numCands-1)];
+      usedSeeds[numUsed++]=selectedSeedIndex;
+
+      bool succ=false;
+      ifstream inf2(filename);
+      while( getline(inf2,temp) )
+	{
+	  vector<string> elems;
+	  splitString(temp, ',', elems);
+	  if (elems.size()!=n+2) 
+	    {
+	      //std::cout << "too short\n";
+	      continue;
+	    }
+	  int index=atoi(elems[0].c_str());
+	  if (index!=selectedSeedIndex) continue;
+	  //std::cout << "success\n";
+	  succ=true;
+	  for (int i=0; i<n; i++)
+	    thesis[i]=atoi(elems[i+1].c_str());
+	  //break;
+	}
+      inf2.close();
+      if (!succ) return false;
+      thesisVal=e->eval(thesis);
+      copyThesisToBest();
+      return true;
+    }
+
+
+    void throwRandomization(double minPercent, double maxPercent, bool anti, bool full)
+    {
+      int tempEnd=0;
+      TargetType* vector;
+      if (anti) 
+	{
+	  vector=antithesis;
+	  for (int i=0; i<n; i++)
+	    {
+	      current[i]=vector[i]=thesis[i];
+	      if (current[i]==0) tempEnd=i;
+	    }
+	}
+      else 
+	{
+	  vector=thesis;
+	  for (int i=0; i<n; i++)
+	    {
+	      current[i]=thesis[i];
+	      if (current[i]==0) tempEnd=i;
+	    }
+	}
+
+      if (maxPercent<minPercent) maxPercent=minPercent;
+      int maxSelect=minimum(n,currentInv[0]+5);
+      int s=myRand(maximum(minimum(maxSelect,(int)round(maxSelect*minPercent*0.01)),1),maximum(minimum((int)round(maxSelect*maxPercent*0.01),maxSelect),1));
+      assert(current[tempEnd]==0);
+      assert(maxSelect>1);
+      /*
+      Binom<int> pick(maxSelect,s);
+      pick.select(false);
+      Permutation<int> perm(s);
+      perm.permute();
+      */
+      int pick[s];
+      int perm[s];
+      int vals[s];
+      
+      for (int i=0,j=myRand(0,maximum(tempEnd-1,0)); i<s; i++) 
+	{
+	  assert(j>=0 && j<n);
+	  //	  std::cout << j << " " << std::flush;
+	  pick[i]=j;
+	  assert(current[j]<n);
+	  assert(current[j]>=0);
+	  if (current[j]>0)
+	    if (e->nodeEnd[current[j]]>e->nodeStart[current[j]]) vals[i]=myRand(e->nodeStart[current[j]],e->nodeEnd[current[j]]);
+		else vals[i]=e->nodeStart[current[j]];
+	  else vals[i]=100000;
+	  j=(n+j-1)%n;
+	  /*
+	  if (j>tempEnd) 
+	    {
+	      s=i+1; break;
+	    }
+	  */
+	}
+      radixSort(vals,s,3,&perm[0]);
+
+
+      for (int k=0; k<s; k++)
+	{
+	  int i=pick[k];
+	  current[i]=vector[pick[perm[k]]];
+	}
+      for (int k=0; k<s; k++)
+	{
+	  int i=pick[k];
+	  vector[i]=current[i];
+	}
+
+      updateTime();
+      if (anti)
+	{
+	  antithesisVal=e->eval(antithesis);
+	  if (myRand(1,100)<=antiGreedy->getPercentage())
+	    greedyAnti(greedyVars->getPercentage(),full);
+	}
+      else thesisVal=e->eval(thesis);
+#ifdef VERBOSE
+      printVector(vector);
+      printObjectives();
+      std::cout << "antithesis is thrown\n";
+#endif
+    }
+	
+
+    int move(void)
+    {
+#ifdef VERBOSE
+      std::cout << "move discretely between thesis and antithesis\n";
+        //std::cout << "move from thesis " << thesisVal << " to antiThesis " << e->eval(antithesis) << std::endl;
+      std::cout << "thesis "; printVector(thesis);
+      std::cout << "antithesis "; printVector(antithesis);
+      printObjectives();
+#endif
+        copyThesisToCurrent();
+        SSet candidates(n);
+	int deltaInd[2*n];
+	int moveInd[2*n];
+	TargetType deltaVal[2*n];
+	TargetType moveVal[2*n];
+	int deltaSize=0;
+	int moveSize=0;
+	
+        for (int i=0; i<n; i++)
+	  {
+	    if (fabs(thesis[i]-antithesis[i])>EPSILON) candidates.add(i);
+	  }
+        double moveValue=thesisVal;
+	SSet cache((n*(n-1))/2);
+        while (candidates.card>0)
+	  {
+#ifdef VERBOSE
+	    std::cout << "current "; printVector(current);
+#endif
+	    double minVal;
+	    double mostImp=0;
+	    double imp;
+	    int mostInd=-1;
+	    TargetType mostVal;
+	    Permutation<int> perm(candidates.card);
+	    perm.permute();
+	    int lastInd1=-1;
+	    int lastInd2=-1;
+	    TargetType lastVal1,lastVal2;
+	    for (int k=0; k<candidates.card; k++)
+	      {
+		int i=candidates.list[perm[k]];
+#ifdef VERBOSE
+		std::cout << "considering var " << i << std::endl;
+#endif
+		if (current[i]==antithesis[i]) continue;
+		int key = getkey(i,currentInv[antithesis[i]],n);
+		if (cache.isIn(key)) continue;
+		else cache.add(key);
+		//cout << currentVal << std::endl << std::flush;
+
+		double candidateVal=currentVal;
+		if (lastInd1<0) 
+		  {
+		    //std::cout << "pot swap " << i << " " << currentInv[antithesis[i]] << std::endl << std::flush;
+		    candidateVal=evalPotentialSwap(i,currentInv[antithesis[i]]);
+		    //cout << candidateVal << std::endl << std::flush;
+		  }
+		else 
+		  {
+		    //std::cout << "eval " << i << " " << currentInv[antithesis[i]] << " " << lastInd1 << " " << lastInd2 << std::endl << std::flush;
+		    candidateVal = e->eval(i,currentInv[antithesis[i]],lastInd1,lastInd2);
+		    //cout << candidateVal << std::endl << std::flush;
+		  }
+		lastInd1=i;
+		lastInd2=currentInv[antithesis[i]];
+		//cout << candidateVal << " <> " << flush;
+		//cout << currentVal << flush;
+		imp=currentVal-candidateVal;
+		if ((mostInd<0)
+		    ||(imp>mostImp))
+		  {
+		    minVal=candidateVal;
+		    mostImp=imp;
+		    mostInd=i;
+		    mostVal=antithesis[i];
+		    if (imp>0) break;   //SHOULD BE PARAMETERIZED!
+		  }
+	      }
+	    if (mostInd<0) break;
+	    assert(mostInd>=0);
+	    stepsInc();
+	    candidates.rem(mostInd);
+
+	    //take the move
+	    TargetType h=current[mostInd];
+	    currentVal=minVal;
+	    deltaInd[deltaSize]=mostInd;
+	    deltaVal[deltaSize++]=mostVal;
+	    deltaInd[deltaSize]=currentInv[mostVal];
+	    deltaVal[deltaSize++]=h;
+	    conductCurrentSwap(mostInd,currentInv[mostVal]);
+	    if (currentVal<=moveValue)
+	      {
+		for (int r=0; r<deltaSize; r++)
+		  {
+		    moveInd[moveSize]=deltaInd[r];
+		    moveVal[moveSize++]=deltaVal[r];
+		  }
+		deltaSize=0;
+		moveValue=currentVal;
+	      }
+	    cache.remAll();
+	  }
+        movesInc();
+        if (moveSize==0) 
+	  {
+#ifdef VERBOSE
+	    std::cout << "move was unsuccessful\n";
+#endif
+	    return 0;
+	  }
+        //std::cout << "\nmoving -> " << moveValue << std::endl;
+        for (int r=0; r<moveSize; r++)
+	  thesis[moveInd[r]]=moveVal[r];
+#ifdef VERBOSE
+	printVector(thesis);
+	printObjectives();
+#endif
+        if (fabs(thesisVal-moveValue)<EPSILON) 
+	  {
+	    thesisVal=moveValue;
+#ifdef VERBOSE
+	    std::cout<< "move did not improve objective\n";
+#endif
+	    return -1;
+	  }
+        thesisVal=moveValue;
+        //if (thesisVal<antithesisVal) std::cout << "X";
+        //std::cout << thesisVal << " <>  " << e->eval(thesis) << std::endl;
+#ifdef VERBOSE
+	std::cout << "move improved objective\n";
+#endif
+        return 1;
+    }
+
+
+public:
+
+ TSPTWHegel(int _n, Variable*& v, Eval* _e, Eval* _e2, int _sSeeds, double _redScenStart, double _redScenEnd, LearnParam* _gV, LearnParam* _aG, LearnParam* _aMin, LearnParam* _aMax, 
+	       LearnParam* _alMin, LearnParam* _alMax, LearnParam* _alProb, LearnParam* _aRProb, LearnParam* _nI, LearnParam* _rMin, LearnParam* _rMax)
+   : n(_n), e(_e), cleanE(_e2), redScenStart(_redScenStart), redScenEnd(_redScenEnd), redScenFac(_redScenStart)
+        , antiGreedy(_aG), antiMinSize(_aMin), antiMaxSize(_aMax)
+        , antiAltMinSize(_alMin), antiAltMaxSize(_alMax)
+        , antiAltProb(_alProb), antiRemProb(_aRProb)
+        , noImprovementRestart(_nI), greedyVars(_gV)
+      , restartMinSize (_rMin), restartMaxSize (_rMax),
+      antiNegSet(_n), antiPosSet(_n), startSeeds(_sSeeds)
+      {
+	antithesisVal=-999;
+	variables=v;
+	v=0;
+	thesis = new TargetType[n];
+	antithesis = new TargetType[n];
+	best = new TargetType[n];
+	current = new TargetType[n];
+	currentInv = new TargetType[n];
+	saveSpace=new TargetType[n];
+	/*
+        double** features=new double*[21];
+        features[0]=&percentTimeElapsed;
+        features[1]=&restarts;
+        features[2]=&restartsNormed;
+        features[3]=&bestUpdates;
+        features[4]=&bestUpdatesNormed;
+
+        features[5]=&totalSteps;
+        features[6]=&totalStepsNormed;
+        features[7]=&totalMoves;
+        features[8]=&totalMovesNormed;
+
+        features[9]=&movesThisRestart;
+        features[10]=&movesThisRestartNormed;
+        features[11]=&movesSinceLastImprovement;
+        features[12]=&movesSinceLastImprovementNormed;
+        features[13]=&movesSinceLastBestUpdate;
+        features[14]=&movesSinceLastBestUpdateNormed;
+
+        features[15]=&stepsSinceLastBestUpdate;
+        features[16]=&stepsSinceLastBestUpdateNormed;
+        features[17]=&stepsThisRestart;
+        features[18]=&stepsThisRestartNormed;
+        features[19]=&stepsSinceLastImprovement;
+        features[20]=&stepsSinceLastImprovementNormed;
+
+        antiGreedy->setFeatures(features);
+        antiMinSize->setFeatures(features);
+        antiMaxSize->setFeatures(features);
+        noImprovementRestart->setFeatures(features);
+        greedyVars->setFeatures(features);
+        restartMinSize->setFeatures(features);
+        restartMaxSize->setFeatures(features);
+        */
+
+        double** features=new double*[11];
+        features[0]=&percentTimeElapsed;
+        features[1]=&restartsNormed;
+        features[2]=&bestUpdatesNormed;
+        features[3]=&totalStepsNormed;
+        features[4]=&totalMovesNormed;
+        features[5]=&movesThisRestartNormed;
+        features[6]=&movesSinceLastImprovementNormed;
+        features[7]=&movesSinceLastBestUpdateNormed;
+        features[8]=&stepsSinceLastBestUpdateNormed;
+        features[9]=&stepsThisRestartNormed;
+        features[10]=&stepsSinceLastImprovementNormed;
+	
+        antiGreedy->setFeatures(features);
+        antiMinSize->setFeatures(features);
+        antiMaxSize->setFeatures(features);
+        antiAltMinSize->setFeatures(features);
+        antiAltMaxSize->setFeatures(features);
+        antiAltProb->setFeatures(features);
+        antiRemProb->setFeatures(features);
+        noImprovementRestart->setFeatures(features);
+        greedyVars->setFeatures(features);
+        restartMinSize->setFeatures(features);
+        restartMaxSize->setFeatures(features);
+	
+        delete [] features;
+    };
+    
+    ~TSPTWHegel()
+    {
+        delete [] thesis;
+        delete [] antithesis;
+        delete [] best;
+        delete [] current;
+	delete [] currentInv;
+	delete [] variables;
+	delete [] saveSpace;
+    }
+
+    void recordBest(double* x)
+    {
+        for (int i=0; i<n; i++) {
+            x[i]=best[i];
+        }
+    }
+
+    void printObjectives(void)
+    {
+      std::cout << "thesis value -> " << thesisVal << "  antithesis value -> " << antithesisVal << "  best value -> " << bestVal << std::endl << std::flush; 
+    }
+
+    double minimize(double tl, char* _inFile, char* _outFile, char* _collabInFile, char* _collabOutFile, double lb=-10000000000)
+    {
+      /*
+      int perm[10];
+      int nums[10]={3,2,1,0,4,5,6,7,8,9};
+      for (int i=0; i<10; i++)
+	std::cout << nums[i] << " ";
+      std::cout << std::endl;
+      radixSort(nums,10,1,perm);
+      for (int i=0; i<10; i++)
+	std::cout << nums[i] << " ";
+      std::cout << std::endl;
+      for (int i=0; i<10; i++)
+	std::cout << perm[i] << " ";
+      std::cout << std::endl;
+      */
+
+
+
+      static int listening=1;
+      redScenFac = myRand(minimum(ceil(redScenStart*10000),floor(10000*redScenEnd)),maximum(ceil(redScenStart*10000),floor(10000*redScenEnd)))*0.0001;
+      e->setReducedScenarioNumber(redScenFac);
+      outFile=_outFile;
+      inFile=_inFile;
+      collabOutFile=_collabOutFile;
+      collabInFile=_collabInFile;
+      called=0;
+      remove(outFile);
+      remove (collabOutFile);
+        init();
+        timelimit=tl;
+        startTime=now();
+        //mySRand(212329);
+        for (int i=0; i<n; i++)
+        best[i]=thesis[i]=e->getValue(i); //(bool)myRand(0,1);
+	/*
+        for (int i=0; i<n; i++)
+	  std::cout << thesis[i] << " ";
+	std::cout << endl;
+	*/
+        bestVal=thesisVal=e->eval(thesis);
+	realBestVal=e->fullEval(thesis)+1;
+	eavesdrop();
+        bestVal=thesisVal=e->eval(thesis);
+	realBestVal=e->fullEval(thesis)+1;
+	assert(std::isfinite(bestVal));
+        //std::cout << "starting greedy\n" << std::flush;
+	for (int i=0; i<n; i++) best[i]=thesis[i];
+        copyThesisToBest();
+        updateTime();
+        greedy(greedyVars->getPercentage());
+        if (realBestVal<=lb) goto FINISHED;
+	double rsp;
+
+        while (true)
+	  {
+	    updateTime();
+	    //std::cout << "\n---RRR---\n";
+	    int noImpCounter=0;
+	    bool surrogateRestart=false;
+            do
+	      {
+#ifdef VERBOSE
+		std::cout << "\nNew Dialective Step\nCurrent time -> " << now() << std::endl << std::flush;
+		printObjectives();
+#endif
+                if(now()-startTime>timelimit) goto TIMEOUT;
+#ifdef VERBOSE
+		std::cout<<"Throw Antithesis\n" << std::flush;
+#endif
+
+		//		cout << "\n\nTESTING NEW ANTITHESIS\n";
+
+		int m;
+		bool regAnti=false;
+		if (myRand(0,100)<=antiAltProb->getPercentage())
+		  {
+		    throwAntithesisSet(antiAltMinSize->getPercentage(),antiAltMaxSize->getPercentage());
+		    m=moveSet(myRand(0,100)<=antiRemProb->getPercentage());
+		  }
+		else
+		  {
+		    regAnti=true;
+		    throwAntithesis(antiMinSize->getPercentage(),antiMaxSize->getPercentage());
+		    m=move(); //path relink by flipping vars from thesis to antithesis value
+		  }
+                if (m!=0)
+		  {		    
+		    //std::cout << "We moved the thesis!\n" << std::flush;
+                    if (m>0) 
+		      {
+			//std::cout << "I";
+			newImprovement();
+			noImpCounter=0;
+		      }
+		    //else std::cout << "+";
+                    updateTime();
+		    //std::cout << "Greey attempt 1!\n" << std::flush;
+                    greedy(greedyVars->getPercentage());
+		    assert(isfinite(thesisVal));
+		    //greedy(greedyVars->getPercentage(),thesis);
+		    //std::cout << "Greey attempt 2!\n" << std::flush;
+		    if (regAnti) greedy(greedyVars->getPercentage(),antithesis);
+		    assert(std::isfinite(thesisVal));
+		    
+                    if (thesisVal<bestVal)
+		      {
+			assert(std::isfinite(thesisVal));
+			copyThesisToBest();
+			if (realBestVal<=lb) goto FINISHED;
+			newBest();
+		      }
+		  }
+		//else std::cout << ".";
+                updateTime();
+#ifndef FORCERESTARTS
+		rsp=noImprovementRestart->getPercentage();
+#else
+		rsp=myRand(1,10)*0.01;
+#endif
+		if (noImpCounter<1000) 
+		  {
+		    rsp=0;
+		    noImpCounter++;
+		    listening=1;
+		  }
+		else
+		  {
+		    if (listening++%100 == 0)
+		      {
+			listening=1;
+			//eavesdrop();
+			if (!eavesdrop())
+			  {
+			    
+			    surrogateRestart=true;
+			    rsp=101;
+			    
+			  }
+		      }
+		  }
+		//		std::cout << "RES PROB -> " << rsp << "  NoImC -> " << noImpCounter << "  Listen -> " << listening << std::endl;
+	      }
+	    while (myRand(0,10000)>=100*rsp);
+            //move to new point
+#ifdef VERBOSE
+	    std::cout << "\n\nNew Restart!\n";
+#endif
+	    if (!surrogateRestart)
+	      {
+		double minSize=restartMinSize->getPercentage();
+		double maxSize=restartMaxSize->getPercentage();
+		if (maxSize<minSize) maxSize=minSize;
+		//if (!eavesdrop())
+		  {
+		    throwRestart(minSize,maxSize);
+		    newRestart();
+		  }
+	      }
+	    else
+	      {
+		redScenFac = myRand(minimum(ceil(redScenStart*10000),floor(10000*redScenEnd)),maximum(ceil(redScenStart*10000),floor(10000*redScenEnd)))*0.0001;
+		//	    std::cout << redScenStart << " | " << redScenFac << " | " << redScenEnd << std::endl;
+		assert(redScenFac>=redScenStart-EPSILON && redScenFac<=redScenEnd+EPSILON);
+		e->setReducedScenarioNumber(redScenFac);
+		bestVal=e->eval(best);
+		e->fullEval(best);
+	      }
+	    //std::cout << "Restart with fac " << redScenFac << std::endl;
+	    thesisVal=e->eval(thesis);
+	    
+            greedy(greedyVars->getPercentage());
+            if (thesisVal<bestVal)
+            {
+                copyThesisToBest();
+                if (realBestVal<=lb) goto FINISHED;
+                newBest();
+            }
+        }
+        FINISHED:
+	std::cout << realBestVal << std::endl;
+	remove (outFile);
+	remove (collabOutFile);
+	return 0;
+        std::cout << std::endl;
+
+        /*
+        std::cout << "\nSolution -> ";
+        for (int i=0; i<n; i++)
+        if (best[i]) std::cout << i << " ";
+        std::cout << std::endl;
+        */
+        std::cout << "time needed -> " << now()-startTime << std::endl;
+	std::cout << "Final Solution "; printVector(best);
+        e->eval(best);
+	remove (outFile);
+	remove (collabOutFile);
+        return realBestVal;
+        TIMEOUT:
+
+	std::cout << realBestVal << std::endl;
+	remove (outFile);
+	remove(collabOutFile);
+	
+        //std::cout << std::endl;
+        /*
+        for (int i=0; i<n; i++)
+        std::cout << best[i] << " ";
+        std::cout << std::endl;
+        */
+        /*
+        std::cout << "\nSolution -> ";
+        for (int i=0; i<n; i++)
+        if (best[i]) std::cout << i << " ";
+        std::cout << std::endl;
+        */
+
+	/*
+        std::cout << "timeout -> " << now() -startTime << std::endl
+		  << "best solution found -> " << realBestVal << " (" << bestVal << ")\n"; //std::endl;
+	std::cout << "Final Solution "; printVector(best);
+	*/
+
+	/*
+	ofstream myfile;
+	myfile.open (outFile);
+	myfile << "1\n";
+	for (int i=0; i<n; i++)
+	  myfile << best[i]+1 << "\n";
+	myfile.close();
+	*/
+        //e->eval(best);
+        return 0;
+    }
+
+};
+
+#endif

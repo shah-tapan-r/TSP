@@ -1,0 +1,17 @@
+#ifndef LIST_HACK
+#define LIST_HACK
+
+class SSet;
+
+class ListHack {
+public:
+    ListHack(SSet* ss) : sset(ss) {
+    }
+
+    long operator[](int idx);
+
+    SSet* sset;
+};
+
+#endif
+
